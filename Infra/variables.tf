@@ -4,6 +4,12 @@ variable "region" {
   description = "Enter Your Region Name"
 }
 
+variable "image_uri" {
+  type        = string
+  default     = "799619129003.dkr.ecr.ca-central-1.amazonaws.com/kubernetes-mono-app:version-5-01b891a9bb82a671f1e9b6d8b12141690cf19e69"
+  description = "Enter Your ECR Image uri"
+}
+
 variable "dev_vpc" {
   description = "Name of the vpc"
   type        = string
