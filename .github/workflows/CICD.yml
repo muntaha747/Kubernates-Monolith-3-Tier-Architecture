@@ -1,0 +1,167 @@
+name: Build, Push to ECR & Docker and Terraform
+
+on:
+  push:
+    branches:
+      - main
+      - developer
+
+  workflow_dispatch:
+    inputs:
+      tf_action:
+        description: "Terraform apply or destroy"
+        required: true
+        default: "apply"
+
+env:
+  AWS_REGION: ca-central-1
+  ECR_REPOSITORY: kubernetes-mono-app
+  DOCKERHUB_REPOSITORY: muntaha747/kubernetes-mono-app
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    # ================================
+    # Checkout Code
+    # ================================
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    # ================================
+    # SET TF ACTION
+    # ================================
+    - name: Set TF_ACTION
+      run: |
+        TF_INPUT="${{ github.event.inputs.tf_action }}"
+
+        if [ -z "$TF_INPUT" ]; then
+          echo "TF_ACTION=apply" >> $GITHUB_ENV
+        else
+          echo "TF_ACTION=$TF_INPUT" >> $GITHUB_ENV
+        fi
+
+    # ================================
+    # BUILD JAVA APP
+    # ================================
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: "17"
+
+    - name: Grant execute permission
+      run: chmod +x gradlew
+
+    - name: Build with Gradle
+      run: ./gradlew build -x test
+
+    # ================================
+    # SET IMAGE TAG
+    # ================================
+    - name: Set IMAGE_TAG
+      run: echo "IMAGE_TAG=version-${{ github.run_number }}-${{ github.sha }}" >> $GITHUB_ENV
+
+    # ================================
+    # DOCKER LOGIN
+    # ================================
+    - name: Login to DockerHub
+      run: |
+        echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login \
+        -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+    # ================================
+    # AWS LOGIN (OIDC)
+    # ================================
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::799619129003:role/github-ecr-role
+        aws-region: ${{ env.AWS_REGION }}
+
+    # ================================
+    # LOGIN TO ECR
+    # ================================
+    - name: Login to ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    # ================================
+    # SET IMAGE URI
+    # ================================
+    - name: Set IMAGE_URI
+      run: |
+        echo "IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
+
+    # ================================
+    # BUILD IMAGE
+    # ================================
+    - name: Build Docker image
+      run: docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+
+    # ================================
+    # TAG IMAGES
+    # ================================
+    - name: Tag for ECR
+      run: docker tag $ECR_REPOSITORY:$IMAGE_TAG $IMAGE_URI
+
+    - name: Tag for DockerHub
+      run: docker tag $ECR_REPOSITORY:$IMAGE_TAG $DOCKERHUB_REPOSITORY:$IMAGE_TAG
+
+    # ================================
+    # PUSH IMAGES
+    # ================================
+    - name: Push to ECR
+      if: env.TF_ACTION == 'apply'
+      run: docker push $IMAGE_URI
+
+    - name: Push to DockerHub
+      if: env.TF_ACTION == 'apply'
+      run: docker push $DOCKERHUB_REPOSITORY:$IMAGE_TAG
+
+    # ================================
+    # TERRAFORM SETUP
+    # ================================
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    - name: Terraform Init
+      working-directory: infra
+      run: terraform init
+
+    - name: Terraform Format
+      working-directory: infra
+      run: terraform fmt
+
+    - name: Terraform Validate
+      working-directory: infra
+      run: terraform validate
+
+    # ================================
+    # TERRAFORM APPLY
+    # ================================
+    - name: Terraform Apply
+      if: env.TF_ACTION == 'apply'
+      working-directory: infra
+      run: |
+        terraform plan -input=false \
+          -var="image_uri=$IMAGE_URI" \
+          -out=tfplan
+
+        terraform apply -auto-approve tfplan
+
+    # ================================
+    # TERRAFORM DESTROY
+    # ================================
+    - name: Terraform Destroy
+      if: env.TF_ACTION == 'destroy'
+      working-directory: infra
+      run: |
+        terraform destroy -auto-approve -input=false \
+          -var="image_uri=$IMAGE_URI"
