@@ -132,15 +132,15 @@ jobs:
       uses: hashicorp/setup-terraform@v3
 
     - name: Terraform Init
-      working-directory: infra
+      working-directory: Infra
       run: terraform init
 
     - name: Terraform Format
-      working-directory: infra
+      working-directory: Infra
       run: terraform fmt
 
     - name: Terraform Validate
-      working-directory: infra
+      working-directory: Infra
       run: terraform validate
 
     # ================================
@@ -148,7 +148,7 @@ jobs:
     # ================================
     - name: Terraform Apply
       if: env.TF_ACTION == 'apply'
-      working-directory: infra
+      working-directory: Infra
       run: |
         terraform plan -input=false \
           -var="image_uri=$IMAGE_URI" \
@@ -161,7 +161,7 @@ jobs:
     # ================================
     - name: Terraform Destroy
       if: env.TF_ACTION == 'destroy'
-      working-directory: infra
+      working-directory: Infra
       run: |
         terraform destroy -auto-approve -input=false \
           -var="image_uri=$IMAGE_URI"
